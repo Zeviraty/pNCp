@@ -44,3 +44,10 @@ def encode_dict(d: dict) -> bytes:
 
 def decode_dict(b: bytes) -> dict:
     return json.loads(b.decode('utf-8'))
+
+def encode_ip(address: tuple[str,int]) -> bytes:
+    return f"{address[0]}:{address[1]}".encode()
+
+def decode_ip(b: bytes) -> tuple[str,int]:
+    splitb = b.decode().split(":")
+    return (splitb[0], int(splitb[1]))

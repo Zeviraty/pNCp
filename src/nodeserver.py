@@ -9,6 +9,7 @@ ip_regex = "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4]
 
 class nodeServer():
     def __init__(self,
+                 ip: str = "0.0.0.0",
                  port: int = 63925,
                  peer_sharing: bool = True,
                  peer_list: list[tuple[str,int]] = [],
@@ -18,6 +19,7 @@ class nodeServer():
         self.check_delay: int = check_delay
         self.port: int = port
         self.peers: list[tuple[str,int]] = peer_list
+        self.ip: str = ip
 
         self.stats: dict = {
             "uptime": 0,
@@ -31,7 +33,10 @@ class nodeServer():
             self.load_peers(peer_file)
 
     def save_peers(self, path: str):
-        open(path,'w').write(f"{i[0]} {i[1]} {i[2]}" for i in self.peers)
+        tmp = ""
+        for i in self.peers:
+            tmp += f"{i[0]} {i[1]} {i[2]}"
+        open(path,'w').write(tmp)
 
     def load_peers(self, path: str):
         try:
@@ -62,7 +67,7 @@ class nodeServer():
     def start(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('0.0.0.0', self.port))
+        self.sock.bind((self.ip, self.port))
         self.sock.listen(5)
         threading.Thread(target=self._listenloop, daemon=True).start()
     
@@ -75,7 +80,6 @@ class nodeServer():
             to_remove = []
             for peer in self.peers:
                 if peer[2] == "c":
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(5)
                     try:
                         sock.connect((peer[0], peer[1]))
@@ -90,16 +94,22 @@ class nodeServer():
     def _listenloop(self):
         while True:
             connection,address = self.sock.accept()
+            print("[Server] got connection!")
             connection.send(f"pp2pn\\s\\{version}".encode())
             buffer: bytes = connection.recv(1024)
             if buffer.decode() != f"pp2pn\\c\\{version}":
+                connection.send(b"error\\61\\version mismatch with node")
                 connection.close()
             else:
-                threading.Thread(target=self._handle_connection, args=(connection,), daemon=True).start()
+                connection.send(b"ok")
+                port = int(connection.recv(1024).decode())
+                self.peers.append((address[0], port, 'c'))
+                threading.Thread(target=self._handle_connection, args=(connection,address), daemon=True).start()
 
-    def _handle_connection(self, connection):
+    def _handle_connection(self, connection, address):
         while True:
             buffer: bytes = connection.recv(1024)
+
             if not buffer:
                 break
 
@@ -131,6 +141,11 @@ class nodeServer():
                             connection.send(helper.encode_dict(self.stats))
                         except:
                             connection.send(b"error\\21\\internal node error")
+                    elif parts[1] == "ip":
+                        try:
+                            connection.send(helper.encode_ip(address))
+                        except:
+                            connection.send(b"error\\21\\internal node error")
                     else:
                         connection.send(b"error\\15\\target not found")
                 case "add":
@@ -140,10 +155,13 @@ class nodeServer():
                                 encoded = buffer.split(b"add\\peers\\", 1)[1]
                                 new_peers = helper.decode_peers(encoded)
                                 self.peers += new_peers
+                                self.peers = list(dict.fromkeys(self.peers))
                                 connection.send(b"ok\\peers\\added")
                             except Exception as e:
                                 connection.send(b"error\\16\\invalid peer data")
                         case "stats":
                             connection.send(b"error\\53\\access denied")
+                        case _:
+                            connection.send(b"error\\15\\target not found")
                 case _:
                     connection.send(b"error\\12\\unknown request type")
